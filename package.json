@@ -1,0 +1,15 @@
+{
+  "name": "minicode",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "effect": "4.0.0-beta.83"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
