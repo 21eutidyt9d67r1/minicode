@@ -72,6 +72,11 @@ export type ToolDefinition = {
   parameters: JsonSchema
 }
 
+export type ToolResultMessage = {
+  role: "tool"
+  content: ToolResultPart[]
+}
+
 export type FinishReason = "stop" | "length" | "tool-calls" | "content-filter" | "unknown"
 
 export type LLMEvent =
