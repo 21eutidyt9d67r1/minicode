@@ -1,5 +1,8 @@
 export * as Auth from "./auth"
 export * as Endpoint from "./endpoint"
+export * as Executor from "./executor"
+export * as Http from "./http"
 export * as Protocol from "./protocol"
 export * as Route from "./route"
+export * as Sse from "./sse"
 export * as Transport from "./transport"
