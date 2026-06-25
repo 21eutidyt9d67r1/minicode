@@ -92,3 +92,5 @@ export const unknownTool = (call: ToolCallPart): ToolResult => ({
   type: "error",
   message: `Unknown tool: ${call.name}`,
 })
+
+export * as Builtin from "./builtin"
