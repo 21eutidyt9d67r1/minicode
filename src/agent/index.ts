@@ -1,58 +1,91 @@
 import { Effect } from "effect"
 import * as LLMClient from "../llm/client"
 import * as Disclosure from "../tool/disclosure"
-import type { AssistantMessage, LLMEvent, LLMRequest, Message, ToolCallPart } from "../llm/schema"
-import { resultPart, unknownTool, type ToolRegistry } from "../tool"
+import type { AssistantMessage, Message, ToolCallPart } from "../llm/schema"
+import { resultPart, unknownTool, type ToolContext, type ToolRegistry } from "../tool"
+import { emit, type RunEvent, type RunEventSink } from "./events"
+import { settleStream, type SettledToolCall, type Settlement } from "./settlement"
 
-export type AgentInput = LLMRequest & {
+export * from "./events"
+export * from "./settlement"
+
+
+export type AgentInput = {
+  model: string
+  messages: Message[]
   registry: ToolRegistry
   maxTurns?: number
+  temperature?: number
+  maxTokens?: number
+  onEvent?: RunEventSink
 }
 
 export type AgentResult = {
   messages: Message[]
-  events: LLMEvent[]
+  events: RunEvent[]
   text: string
+  cancelled: boolean
 }
 
 export const run = Effect.fn("Agent.run")(function* (input: AgentInput) {
   const state = Disclosure.initialState()
   const maxTurns = input.maxTurns ?? 8
-  const events: LLMEvent[] = []
+  const events: RunEvent[] = []
   const messages: Message[] = [...input.messages]
   let text = ""
 
+  const sink: RunEventSink = (event) => {
+    events.push(event)
+    input.onEvent?.(event)
+  }
+
+  emit(sink, { type: "run-start", model: input.model })
+
   for (let turn = 0; turn < maxTurns; turn++) {
+    emit(sink, { type: "turn-start", turn })
+
     const view = yield* Disclosure.view(input.registry, state)
-    const response = yield* LLMClient.generate({
-      ...input,
+    const stream = LLMClient.stream({
+      model: input.model,
       messages,
       tools: view.tools,
+      temperature: input.temperature,
+      maxTokens: input.maxTokens,
     })
-    events.push(...response.events)
-    text += response.text
+    const settlement = yield* settleStream(stream, turn, sink)
 
-    const calls = response.events.filter((event): event is Extract<LLMEvent, { type: "tool-call" }> =>
-      event.type === "tool-call",
-    )
-    if (calls.length === 0) return { messages, events, text }
+    if (settlement.text) text += settlement.text
 
-    messages.push(assistantMessage(response.text, calls))
+    if (settlement.cancelled || settlement.toolCalls.length === 0) {
+      emit(sink, { type: "run-settled", settlement })
+      return { messages, events, text, cancelled: settlement.cancelled }
+    }
+
+    messages.push(assistantMessage(settlement))
     messages.push({
       role: "tool",
-      content: yield* Effect.forEach(calls, (call) => executeTool(input.registry, state, call)),
+      content: yield* Effect.forEach(settlement.toolCalls, (call) =>
+        executeTool(input.registry, state, turn, call, sink),
+      ),
     })
   }
 
-  return { messages, events, text }
+  const settlement: Settlement = { text, toolCalls: [], finishReason: "length", cancelled: false }
+  emit(sink, { type: "run-settled", settlement })
+  return { messages, events, text, cancelled: false }
 })
 
-function assistantMessage(text: string, calls: Array<Extract<LLMEvent, { type: "tool-call" }>>): AssistantMessage {
+function assistantMessage(settlement: Settlement): AssistantMessage {
   return {
     role: "assistant",
     content: [
-      ...(text ? [{ type: "text" as const, text }] : []),
-      ...calls.map((call) => ({ type: "tool-call" as const, id: call.id, name: call.name, input: call.input })),
+      ...(settlement.text ? [{ type: "text" as const, text: settlement.text }] : []),
+      ...settlement.toolCalls.map((call) => ({
+        type: "tool-call" as const,
+        id: call.id,
+        name: call.name,
+        input: call.input,
+      })),
     ],
   }
 }
@@ -60,13 +93,16 @@ function assistantMessage(text: string, calls: Array<Extract<LLMEvent, { type: "
 function executeTool(
   registry: ToolRegistry,
   state: Disclosure.DisclosureState,
-  call: Extract<LLMEvent, { type: "tool-call" }>,
+  turn: number,
+  call: SettledToolCall,
+  sink: RunEventSink,
 ) {
   const part: ToolCallPart = { type: "tool-call", id: call.id, name: call.name, input: call.input }
   return Effect.gen(function* () {
+    const context: ToolContext = {}
     const tool = yield* Disclosure.resolveTool(registry, state, call.name)
-    if (!tool) return resultPart(part, unknownTool(part))
-    const result = yield* tool.execute(call.input, {})
-    return resultPart(part, result)
+    const resolved = tool ? resultPart(part, yield* tool.execute(call.input, context)) : resultPart(part, unknownTool(part))
+    emit(sink, { type: "tool-result", turn, id: call.id, name: call.name, result: resolved.result })
+    return resolved
   })
 }

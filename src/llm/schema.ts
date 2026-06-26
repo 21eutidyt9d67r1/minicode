@@ -79,10 +79,17 @@ export type ToolResultMessage = {
 
 export type FinishReason = "stop" | "length" | "tool-calls" | "content-filter" | "unknown"
 
+export type TextDeltaPayload = { text: string }
+export type ToolInputStartPayload = { id: string; name: string }
+export type ToolInputDeltaPayload = { id: string; name: string; text: string }
+export type ToolInputEndPayload = { id: string; name: string }
+export type ToolCallPayload = { id: string; name: string; input: unknown }
+export type FinishPayload = { reason: FinishReason }
+
 export type LLMEvent =
-  | { type: "text-delta"; text: string }
-  | { type: "tool-input-start"; id: string; name: string }
-  | { type: "tool-input-delta"; id: string; name: string; text: string }
-  | { type: "tool-input-end"; id: string; name: string }
-  | { type: "tool-call"; id: string; name: string; input: unknown }
-  | { type: "finish"; reason: FinishReason }
+  | ({ type: "text-delta" } & TextDeltaPayload)
+  | ({ type: "tool-input-start" } & ToolInputStartPayload)
+  | ({ type: "tool-input-delta" } & ToolInputDeltaPayload)
+  | ({ type: "tool-input-end" } & ToolInputEndPayload)
+  | ({ type: "tool-call" } & ToolCallPayload)
+  | ({ type: "finish" } & FinishPayload)

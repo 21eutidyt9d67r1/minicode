@@ -12,7 +12,7 @@ export const fetchExecutor: Executor = {
   execute: (request) =>
     Effect.gen(function* () {
       const response = yield* Effect.tryPromise({
-        try: () => fetch(request.url, request.init),
+        try: (signal) => fetch(request.url, { ...request.init, signal }),
         catch: (error) => new TransportError("HTTP request failed", error),
       })
 
