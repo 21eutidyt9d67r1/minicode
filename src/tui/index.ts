@@ -1,6 +1,7 @@
 import { Effect } from "effect"
 import { Agent } from ".."
 import type { RunEvent } from "../agent/events"
+import * as Context from "../context"
 import type { Message } from "../llm/schema"
 import { text } from "../llm/schema"
 import { registry } from "../tool"
@@ -8,22 +9,23 @@ import { Builtin } from "../tool"
 
 const DEFAULT_MODEL = "deepseek-v4-flash"
 
+const BASE_PROMPT = [
+  "You are minicode, a small terminal coding assistant.",
+  "Use tools when useful. Tools are disclosed progressively: list tools first, then reveal specific tools before calling them.",
+  "Keep answers concise.",
+].join("\n")
+
 export const run = Effect.fn("Tui.run")(function* () {
   const tools = registry([Builtin.provider(process.cwd())])
-  const messages: Message[] = [
-    {
-      role: "system",
-      content: [
-        text(
-          [
-            "You are minicode, a small terminal coding assistant.",
-            "Use tools when useful. Tools are disclosed progressively: list tools first, then reveal specific tools before calling them.",
-            "Keep answers concise.",
-          ].join("\n"),
-        ),
-      ],
-    },
-  ]
+  const catalog = yield* tools.catalog()
+  const facts = yield* Context.gatherWorkspace(process.cwd())
+  const baseline = Context.buildBaseline([
+    Context.baseSource(BASE_PROMPT),
+    Context.envSource(facts),
+    Context.instructionsSource(facts),
+    Context.toolsSource(catalog.map((item) => ({ name: item.name, description: item.description }))),
+  ])
+  let ctx = Context.make(baseline, [])
 
   let active: AbortController | undefined
   process.on("SIGINT", () => {
@@ -35,6 +37,7 @@ export const run = Effect.fn("Tui.run")(function* () {
   })
 
   printBanner()
+  const model = process.env.MINICODE_MODEL ?? DEFAULT_MODEL
   while (true) {
     const input = yield* prompt("you> ")
     const trimmed = input.trim()
@@ -44,16 +47,21 @@ export const run = Effect.fn("Tui.run")(function* () {
       printHelp()
       continue
     }
+    if (trimmed === "/compact") {
+      ctx = yield* runCompaction(ctx, model)
+      continue
+    }
 
-    messages.push({ role: "user", content: [text(input)] })
+    const before = Context.snapshot(ctx)
+    ctx = Context.appendTurn(ctx, { role: "user", content: [text(input)] })
 
     const controller = new AbortController()
     active = controller
     const outcome = yield* Effect.promise(() =>
       Effect.runPromise(
         Agent.run({
-          model: process.env.MINICODE_MODEL ?? DEFAULT_MODEL,
-          messages,
+          model,
+          messages: Context.build(ctx),
           registry: tools,
           onEvent: render,
         }),
@@ -73,14 +81,49 @@ export const run = Effect.fn("Tui.run")(function* () {
     }
 
     const result = outcome.result
-    messages.splice(0, messages.length, ...result.messages)
+    ctx = Context.replaceTurns(ctx, stripSystem(result.messages))
+    logContextDelta(before, Context.snapshot(ctx))
     if (result.cancelled) {
       process.stdout.write("\n[cancelled]\n\n")
       continue
     }
     process.stdout.write("\n\n")
+
+    if (Context.isOverflow(result.usage, model)) {
+      process.stdout.write(`(context ${result.usage?.total} tokens near limit — compacting)\n`)
+      ctx = yield* runCompaction(ctx, model)
+    }
   }
 })
+
+const runCompaction = Effect.fn("Tui.compact")(function* (ctx: Context.Context, model: string) {
+  const result = yield* Effect.catch(Context.compact({ turns: ctx.turns, model }), (error) => {
+    process.stdout.write(`\n[compact failed] ${describeError(error)}\n`)
+    return Effect.succeed({ turns: ctx.turns, summarized: 0, kept: ctx.turns.length })
+  })
+  if (result.summarized === 0) {
+    process.stdout.write("∑ nothing to compact\n")
+    return ctx
+  }
+  process.stdout.write(`∑ compacted ${result.summarized}→1 summary, kept ${result.kept} recent\n`)
+  return Context.replaceTurns(ctx, result.turns)
+})
+
+function stripSystem(messages: Message[]): Message[] {
+  return messages.filter((message) => message.role !== "system")
+}
+
+function logContextDelta(before: Context.ContextSnapshot, after: Context.ContextSnapshot): void {
+  const delta = Context.diff(before, after)
+  if (!delta.changed) {
+    process.stdout.write(`\n= context unchanged (epoch ${after.epoch})\n`)
+    return
+  }
+  const parts: string[] = [`turns ${before.turnCount}→${after.turnCount}`]
+  if (delta.epochChanged) parts.push(`epoch ${before.epoch}→${after.epoch}`)
+  else parts.push(`epoch ${after.epoch}`)
+  process.stdout.write(`\nΔ context changed (${parts.join(", ")})\n`)
+}
 
 let streaming = false
 
@@ -121,6 +164,7 @@ function printBanner() {
 function printHelp() {
   process.stdout.write("\n")
   process.stdout.write("/help  show this help\n")
+  process.stdout.write("/compact  summarize older history to free context\n")
   process.stdout.write("/exit  quit\n")
   process.stdout.write("Ctrl-C cancels the current turn; press again at the prompt to quit.\n")
   process.stdout.write("\n")

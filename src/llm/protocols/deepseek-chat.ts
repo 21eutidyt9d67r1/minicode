@@ -45,6 +45,7 @@ export type DeepSeekChatBody = {
   model: string
   messages: DeepSeekMessage[]
   stream: true
+  stream_options?: { include_usage: boolean }
   tools?: DeepSeekTool[]
   tool_choice?: "auto" | "none" | "required" | { type: "function"; function: { name: string } }
   temperature?: number
@@ -68,6 +69,11 @@ type DeepSeekChunk = {
     }
     finish_reason?: string | null
   }>
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
+  } | null
 }
 
 type ParserState = {
@@ -80,6 +86,7 @@ const from = Effect.fn("DeepSeekChat.body.from")(function* (request: LLMRequest)
     model: request.model,
     messages: yield* Effect.forEach(request.messages, lowerMessage).pipe(Effect.map((items) => items.flat())),
     stream: true as const,
+    stream_options: { include_usage: true },
     tools: request.tools?.map(lowerTool),
     tool_choice: request.toolChoice ? lowerToolChoice(request.toolChoice) : undefined,
     temperature: request.temperature,
@@ -103,6 +110,10 @@ function lowerToolChoice(toolChoice: NonNullable<LLMRequest["toolChoice"]>): Dee
   return { type: "function", function: { name: toolChoice.name } }
 }
 
+// DeepSeek caches prefixes server-side and ignores client cache_control, so the
+// `cacheControl` markers placed by route/cache.ts are intentionally not emitted onto the
+// wire here. The breakpoint mechanism still runs upstream; this mapping is the documented
+// no-op for the DeepSeek provider.
 function lowerMessage(message: Message): Effect.Effect<DeepSeekMessage[], LLMError> {
   if (message.role === "system") return Effect.succeed([{ role: "system", content: joinText(message.content) }])
   if (message.role === "user") return Effect.succeed([lowerUserMessage(message)])
@@ -201,6 +212,12 @@ const step = Effect.fn("DeepSeekChat.stream.step")(function* (state: ParserState
 
   if (finishReason === "tool-calls") events.push(...finishToolCalls(tools))
   if (choice?.finish_reason) events.push({ type: "finish", reason: finishReason ?? "unknown" })
+
+  if (event.usage) {
+    const input = event.usage.prompt_tokens ?? 0
+    const output = event.usage.completion_tokens ?? 0
+    events.push({ type: "usage", input, output, total: event.usage.total_tokens ?? input + output })
+  }
 
   return [{ tools, finishReason }, events] as const
 })

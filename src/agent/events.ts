@@ -5,6 +5,7 @@ import type {
   ToolInputDeltaPayload,
   ToolInputStartPayload,
   ToolResult,
+  UsagePayload,
 } from "../llm/schema"
 import type { Settlement } from "./settlement"
 
@@ -19,6 +20,7 @@ export type RunEvent =
   | ({ type: "tool-call" } & Turn & ToolCallPayload)
   | ({ type: "tool-result" } & Turn & ToolInputStartPayload & { result: ToolResult })
   | ({ type: "turn-finish" } & Turn & FinishPayload)
+  | ({ type: "usage" } & Turn & UsagePayload)
   | { type: "run-settled"; settlement: Settlement }
 
 export type RunEventSink = (event: RunEvent) => void

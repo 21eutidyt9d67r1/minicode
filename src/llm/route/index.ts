@@ -1,4 +1,5 @@
 export * as Auth from "./auth"
+export * as Cache from "./cache"
 export * as Endpoint from "./endpoint"
 export * as Executor from "./executor"
 export * as Http from "./http"

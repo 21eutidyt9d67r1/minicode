@@ -1,6 +1,7 @@
 import { Effect, Stream } from "effect"
 import { route as deepseekRoute } from "./deepseek"
 import type { LLMError } from "./errors"
+import { applyCaching } from "./route/cache"
 import type { LLMEvent, LLMRequest } from "./schema"
 
 export type LLMResponse = {
@@ -9,7 +10,10 @@ export type LLMResponse = {
 }
 
 export function stream(request: LLMRequest): Stream.Stream<LLMEvent, LLMError> {
-  return deepseekRoute.stream(request)
+  return deepseekRoute.stream({
+    ...request,
+    messages: applyCaching(request.messages, "deepseek"),
+  })
 }
 
 export const generate = Effect.fn("LLMClient.generate")(function* (request: LLMRequest) {

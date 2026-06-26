@@ -4,7 +4,7 @@ import * as Disclosure from "../tool/disclosure"
 import type { AssistantMessage, Message, ToolCallPart } from "../llm/schema"
 import { resultPart, unknownTool, type ToolContext, type ToolRegistry } from "../tool"
 import { emit, type RunEvent, type RunEventSink } from "./events"
-import { settleStream, type SettledToolCall, type Settlement } from "./settlement"
+import { settleStream, type SettledToolCall, type Settlement, type Usage } from "./settlement"
 
 export * from "./events"
 export * from "./settlement"
@@ -25,6 +25,7 @@ export type AgentResult = {
   events: RunEvent[]
   text: string
   cancelled: boolean
+  usage?: Usage
 }
 
 export const run = Effect.fn("Agent.run")(function* (input: AgentInput) {
@@ -33,6 +34,7 @@ export const run = Effect.fn("Agent.run")(function* (input: AgentInput) {
   const events: RunEvent[] = []
   const messages: Message[] = [...input.messages]
   let text = ""
+  let usage: Usage | undefined
 
   const sink: RunEventSink = (event) => {
     events.push(event)
@@ -55,10 +57,11 @@ export const run = Effect.fn("Agent.run")(function* (input: AgentInput) {
     const settlement = yield* settleStream(stream, turn, sink)
 
     if (settlement.text) text += settlement.text
+    if (settlement.usage) usage = settlement.usage
 
     if (settlement.cancelled || settlement.toolCalls.length === 0) {
       emit(sink, { type: "run-settled", settlement })
-      return { messages, events, text, cancelled: settlement.cancelled }
+      return { messages, events, text, cancelled: settlement.cancelled, usage }
     }
 
     messages.push(assistantMessage(settlement))
@@ -70,9 +73,9 @@ export const run = Effect.fn("Agent.run")(function* (input: AgentInput) {
     })
   }
 
-  const settlement: Settlement = { text, toolCalls: [], finishReason: "length", cancelled: false }
+  const settlement: Settlement = { text, toolCalls: [], finishReason: "length", cancelled: false, usage }
   emit(sink, { type: "run-settled", settlement })
-  return { messages, events, text, cancelled: false }
+  return { messages, events, text, cancelled: false, usage }
 })
 
 function assistantMessage(settlement: Settlement): AssistantMessage {

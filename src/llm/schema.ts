@@ -1,6 +1,10 @@
+export type CacheControl = "ephemeral"
+
 export type TextPart = {
   type: "text"
   text: string
+  cacheControl?: CacheControl
+  summary?: boolean
 }
 
 export type ImagePart = {
@@ -8,6 +12,7 @@ export type ImagePart = {
   mime: "image/png" | "image/jpeg" | "image/webp"
   source: { type: "url"; url: string } | { type: "base64"; data: string }
   filename?: string
+  cacheControl?: CacheControl
 }
 
 export type ToolCallPart = {
@@ -15,6 +20,7 @@ export type ToolCallPart = {
   id: string
   name: string
   input: unknown
+  cacheControl?: CacheControl
 }
 
 export type ToolResult =
@@ -26,6 +32,7 @@ export type ToolResultPart = {
   id: string
   name: string
   result: ToolResult
+  cacheControl?: CacheControl
 }
 
 export type ContentPart =
@@ -85,6 +92,7 @@ export type ToolInputDeltaPayload = { id: string; name: string; text: string }
 export type ToolInputEndPayload = { id: string; name: string }
 export type ToolCallPayload = { id: string; name: string; input: unknown }
 export type FinishPayload = { reason: FinishReason }
+export type UsagePayload = { input: number; output: number; total: number }
 
 export type LLMEvent =
   | ({ type: "text-delta" } & TextDeltaPayload)
@@ -93,3 +101,4 @@ export type LLMEvent =
   | ({ type: "tool-input-end" } & ToolInputEndPayload)
   | ({ type: "tool-call" } & ToolCallPayload)
   | ({ type: "finish" } & FinishPayload)
+  | ({ type: "usage" } & UsagePayload)
